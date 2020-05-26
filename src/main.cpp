@@ -32,8 +32,6 @@ int main(int argc, char const *argv[]) {
 
     double dz = atof(argv[2]);
 
-    bool visualize = atoi(argv[3]);
-
     geom::Timer timer;
     FaceVertexMesh mesh{argv[1]};
     IndexedEdgeMesh geom{mesh};

@@ -1,1 +1,1 @@
-./build/slicer_no_cairo Nefertiti.obj 0.1
+./build/slicer Nefertiti.obj 0.25
