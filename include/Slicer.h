@@ -3,7 +3,6 @@
 #define SLICER_H
 
 #include <set>
-#include <variant>
 #include <Progress.h>
 #include <map>
 #include <EdgeMesh.h>

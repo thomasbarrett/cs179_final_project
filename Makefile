@@ -1,5 +1,5 @@
 CPP = g++
-CPPFLAGS = -Iinclude -std=c++17 -O3
+CPPFLAGS = -Iinclude -std=c++14 -O3
 
 $(shell mkdir -p build)
 $(shell mkdir -p img)

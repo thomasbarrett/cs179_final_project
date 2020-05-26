@@ -263,7 +263,10 @@ void Slicer::computeContours() {
             std::vector<uint64_t> polygon;
             std::vector<Point> polygon2;
 
-            for (auto &[a, b]: graph) {
+            for (auto &entry: graph) {
+                auto &a = entry.first;
+                auto &b = entry.second;
+
                 if (visited.find(a) != visited.end()) continue;
                 polygon = {a, b.edges[0]};
                 polygon2 = {b.position};
