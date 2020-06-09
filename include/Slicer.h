@@ -11,6 +11,7 @@ class Slicer {
 public:
 
     void sliceGeometry(const IndexedEdgeMesh &m, double dz);
+    void sliceGeometryGPU(const IndexedEdgeMesh &m, double dz);
 
 private:
 

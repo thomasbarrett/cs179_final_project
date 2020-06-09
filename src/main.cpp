@@ -39,6 +39,7 @@ int main(int argc, char const *argv[]) {
     printf("loading model: %.2f seconds\n", timer.duration());
 
     Slicer().sliceGeometry(geom, dz);
+    Slicer().sliceGeometryGPU(geom, dz);
 
     return 0;
     

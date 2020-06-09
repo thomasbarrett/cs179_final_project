@@ -15,6 +15,9 @@
 #include <Progress.h>
 #include <Timer.h>
 
+#include <cuda_runtime.h>
+#include <transpose_device.cuh>
+
 #if USE_CAIRO
 #include <cairo/cairo.h>
 #endif
@@ -111,7 +114,7 @@ void Slicer::sliceGeometry(const IndexedEdgeMesh &geometry, double dz) {
         free(output_edges);
         free(output_points);
     }
-    printf("slicing triangles: %.2f seconds\n", elapsed_slice_time);
+    printf("slicing triangles (CPU): %.2f seconds\n", elapsed_slice_time);
     printf("construcing graph: %.2f seconds\n", elapsed_graph_time);
 
     geom::Timer t2;
@@ -122,12 +125,156 @@ void Slicer::sliceGeometry(const IndexedEdgeMesh &geometry, double dz) {
 
     geom::Timer t3;
     printf("info: rasterizing images\n");
-    exportImages("img/slice");
-    printf("%.2f seconds\n", t3.duration()); 
+    exportImages("img_cpu/slice");
+    printf("%.2f seconds\n\n", t3.duration()); 
 
     #endif
 }
 
+
+void Slicer::sliceGeometryGPU(const IndexedEdgeMesh &geometry, double dz) {
+
+    auto min_max = geometry.minmax(2);
+    float minz = min_max[0];
+    float maxz = min_max[1];
+    slice_count = (int)((maxz - minz) / dz) + 1;
+    
+    /*
+     * The input to our algorithm is three buffers containing the mesh data.
+     * 1. input_triangles: a list of three edge indices for each triangle
+     * 2. input_edges: a list of two vertex indices for each edge
+     * 3. input_vertices: a list of points in R^3 for each vertex
+     */
+
+    const uint32_t *input_triangles = (uint32_t *) geometry.triangles().data();
+    uint32_t input_triangle_count = geometry.triangles().size();
+
+    const uint32_t *input_edges = (uint32_t *) geometry.edges().data();
+    uint32_t input_edge_count = geometry.edges().size();
+
+    const float *input_vertices = (float *) geometry.vertices().data();
+    uint32_t input_vertex_count = geometry.vertices().size();
+
+    uint32_t *output_edges = (uint32_t*) calloc(geometry.triangles().size(), 2 * sizeof(uint32_t));
+    float *output_points = (float*) calloc(geometry.edges().size(), 2 * sizeof(float));
+
+    uint32_t *gpu_input_triangles;
+    uint32_t *gpu_input_edges;
+    float *gpu_input_vertices;
+    uint32_t *gpu_output_edges;
+    float *gpu_output_points;
+
+
+    /**
+     * We perform the following operations for each slicing plane:
+     * 1. Intersect triangles with slicing plane
+     * 2. Construct edge-list graph for contours
+     * 3. Construct list of polygons from edge-list graph
+     */
+
+    float elapsed_slice_time = 0.0;
+    float elapsed_graph_time = 0.0;
+
+    geom::Timer timer_1;
+
+    cudaMalloc((void**)&gpu_input_triangles, sizeof (uint32_t) * 3 * input_triangle_count);
+    cudaMemcpy(gpu_input_triangles, input_triangles, sizeof (uint32_t) * 3 * input_triangle_count, cudaMemcpyHostToDevice);
+
+    cudaMalloc((void**)&gpu_input_edges, sizeof (uint32_t) * 2 * input_edge_count);
+    cudaMemcpy(gpu_input_edges, input_edges, sizeof (uint32_t) * 2 * input_edge_count, cudaMemcpyHostToDevice);
+
+    cudaMalloc((void**)&gpu_input_vertices, sizeof (float) * 3 * input_vertex_count);
+    cudaMemcpy(gpu_input_vertices, input_vertices, sizeof (float) * 3 * input_vertex_count, cudaMemcpyHostToDevice);
+
+    cudaMalloc((void**)&gpu_output_edges, input_triangle_count * 2 * sizeof(uint32_t));
+    cudaMalloc((void**)&gpu_output_points, input_edge_count * 2 * sizeof(float));
+
+    elapsed_slice_time += timer_1.duration();
+
+    for (int sidx = 0; sidx < slice_count; sidx++) {
+
+        /*
+         * This approach is valid for non-uniform slices, but for simplicity, 
+         * we just consider uniform slices.
+         */
+        double z = sidx * dz + minz;
+
+        /**
+         * Our algorithm returns two buffers containing the intersection data
+         * 1. output_edges: a list of two intersection indices for each triangle
+         * 2. output_points: a list of points in R^3 for each edge.
+         * 
+         * Since a slicing plane could intersect an edge exactly at one of its
+         * end points, we define an intersection to be either an edge or a vertex.
+         * Since we assign a unique identifier to each edge and vertex, we can 
+         * assign each intersection a unique identifier by offsetting the vertex
+         * indices by the number of edges.
+         * 
+         * If intersection is an edge:
+         * uint32_t id = edge_id
+         * 
+         * If intersection is a vertex:
+         * uint32_t id = edge_count + vertex_id
+         * 
+         * Note that in the degenerate case of a vertex exactly intersecting the
+         * slicing plane, its point of intersection would be the point itself.
+         * Thus, there is no need for output_points to contain an entry for the
+         * vertices.
+         */
+
+       
+
+        geom::Timer timer_1;
+
+        CallSliceTrianglesKernel(
+            gpu_input_triangles, input_triangle_count,
+            gpu_input_edges, input_edge_count,
+            gpu_input_vertices, input_vertex_count,
+            gpu_output_edges, gpu_output_points, z
+        );
+
+        cudaMemcpy(output_edges, gpu_output_edges, input_triangle_count * 2 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        cudaMemcpy(output_points, gpu_output_points, input_edge_count * 2 * sizeof(float), cudaMemcpyDeviceToHost);
+        
+        elapsed_slice_time += timer_1.duration();
+
+        geom::Timer timer_2;
+
+        buildEdgeList(
+            input_triangles, input_triangle_count,
+            input_edges, input_edge_count,
+            input_vertices, input_vertex_count,
+            output_edges, output_points);
+
+        elapsed_graph_time += timer_2.duration();
+
+
+    }
+    printf("slicing triangles (GPU): %.2f seconds\n", elapsed_slice_time);
+    printf("construcing graph: %.2f seconds\n", elapsed_graph_time);
+
+    geom::Timer t2;
+    computeContours();
+    printf("connecting contours: %.2f seconds\n\n", t2.duration());
+
+    free(output_edges);
+    free(output_points);
+    
+    cudaFree(gpu_input_triangles);
+    cudaFree(gpu_input_edges);
+    cudaFree(gpu_input_vertices);
+    cudaFree(gpu_output_edges);
+    cudaFree(gpu_output_points);
+
+    #if USE_CAIRO
+
+    geom::Timer t3;
+    printf("info: rasterizing images\n");
+    exportImages("img_gpu/slice");
+    printf("%.2f seconds\n", t3.duration()); 
+
+    #endif
+}
 
 /**
  * This is the primary function that will be translated into CUDA.
@@ -299,17 +446,23 @@ void Slicer::exportImages(const std::string &path_prefix) {
     cairo_surface_t *surface;
     cairo_t *cr;
 
-    surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24,1920,1080);
-   
+    surface = cairo_image_surface_create(CAIRO_FORMAT_A8,1920,1080);
+
+
     ProgressBar progress;
     for (int i = 0; i < slice_count; i++) {
 
         cr = cairo_create(surface);
 
+        cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+        cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+        cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+        cairo_set_line_width(cr, 0);
+
         Polygons &polygons = polygons_[i];
         progress.update((float) i / slice_count);
 
-        cairo_set_source_rgb(cr, 0, 0, 0);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0);
         cairo_paint(cr);
         cairo_translate(cr, 960, 540);
         cairo_scale(cr, 20, 20);
@@ -317,7 +470,7 @@ void Slicer::exportImages(const std::string &path_prefix) {
         cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
 
         for (const auto &polygon: polygons) {
-            cairo_set_source_rgb(cr, 1, 1, 1);
+            cairo_set_source_rgba(cr, 0, 0, 0, 1);
             cairo_set_line_width(cr, 0.05);
             cairo_move_to (cr, polygon[0][0], polygon[0][1]);
             for (const auto &point: polygon) {
