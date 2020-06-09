@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cuda_runtime.h>
-#include <transpose_device.cuh>
+#include <Slicer.cuh>
 
 __global__ void sliceTrianglesKernel(
     const uint32_t *input_triangles, uint32_t input_triangle_count,

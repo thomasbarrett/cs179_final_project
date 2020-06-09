@@ -44,7 +44,8 @@ endif
 TARGETS = build/slicer build/slicer_no_cairo
 
 $(shell mkdir -p build)
-$(shell mkdir -p img)
+$(shell mkdir -p img_cpu)
+$(shell mkdir -p img_gpu)
 $(shell mkdir -p obj)
 
 all: $(TARGETS)
@@ -53,10 +54,10 @@ build/slicer: src/Slicer.cpp src/main.cpp obj/transpose.o
 	$(CC) $^ -o $@ -O3 -Iinclude -DUSE_CAIRO=1 $(LDFLAGS) -Wall -I$(CUDA_INC_PATH) -lcairo -pthread
 
 
-build/slicer_no_cairo: src/Slicer.cpp src/main.cpp obj/transpose.o
+build/slicer_no_cairo: src/Slicer.cpp src/main.cpp obj/Slicer.o
 	$(CC) $^ -o $@ -O3 -Iinclude -DUSE_CAIRO=0 $(LDFLAGS) -Wall -I$(CUDA_INC_PATH) -pthread
 
-obj/transpose.o: src/transpose_device.cu
+obj/Slicer.o: src/Slicer.cu
 	$(NVCC) $(NVCCFLAGS) -O3 -Iinclude $(EXTRA_NVCCFLAGS) $(GENCODE_FLAGS) -I$(CUDA_INC_PATH) -o $@ -c $<
 
 clean:

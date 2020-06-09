@@ -16,7 +16,7 @@
 #include <Timer.h>
 
 #include <cuda_runtime.h>
-#include <transpose_device.cuh>
+#include <Slicer.cuh>
 
 #if USE_CAIRO
 #include <cairo/cairo.h>

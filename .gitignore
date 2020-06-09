@@ -2,4 +2,5 @@
 .DS_Store/
 build/
 obj/
-img/
+img_cpu/
+img_gpu
